@@ -1,8 +1,8 @@
 """策略胶水冒烟测试：用假引擎实例化，验证信号执行与风控门控。"""
 from datetime import datetime
 
-from vnpy.trader.constant import Direction, Exchange, Interval, Offset
-from vnpy.trader.object import BarData
+from vnpy.trader.constant import Direction, Exchange, Interval, Offset, Status
+from vnpy.trader.object import BarData, OrderData
 
 from dual_thrust import DualThrustStrategy
 from dual_thrust_core import DayState
@@ -30,6 +30,7 @@ class FakeEngine:
     def send_order(self, strategy, direction, offset, price, volume, stop, lock, net):
         self.sent.append({"direction": direction, "offset": offset,
                           "price": price, "volume": volume})
+        return ["fake-1"]  # 模拟真实引擎：返回 vt_orderid 列表（vnpy 4.0 与 3.x 一致）
 
     def get_gateway_name(self, strategy):
         return "CTP"
@@ -169,3 +170,26 @@ def test_exit_uses_fixed_size_when_stale():
              if o["direction"] == Direction.SHORT and o["offset"] == Offset.CLOSE]
     assert exits
     assert exits[-1]["volume"] == s.fixed_size
+
+
+def test_rejected_entry_rolls_back():
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    s.on_bar(make_vn_bar(5, 21, 15, 116, 117, 114, 116))  # 入场 BUY（FakeEngine 返回 "fake-1"）
+    assert len(engine.sent) == 1
+    order = OrderData(gateway_name="fake", symbol="ru2601", exchange=Exchange.SHFE,
+                      orderid="1", direction=Direction.LONG, offset=Offset.OPEN,
+                      status=Status.REJECTED)
+    order.vt_orderid = "fake-1"  # 与 FakeEngine 返回的假 orderid 对齐
+    s.on_order(order)
+    assert s.core.state is DayState.ARMED  # 异步拒单 → 回退待命
+    assert s.halted is False
+    # 拒单后当日禁止开仓：再喂突破 bar 不再发单
+    s.on_bar(make_vn_bar(5, 21, 16, 116, 117, 114, 116))
+    assert len(engine.sent) == 1
+    # 再喂一根无信号 bar：一致性校验不触发停机死链
+    s.on_bar(make_vn_bar(5, 21, 17, 105, 110, 100, 105))
+    assert s.halted is False

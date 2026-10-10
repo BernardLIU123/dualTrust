@@ -76,6 +76,8 @@ class DualThrustStrategy(CtaTemplate):
         self._prewarned_today = False
         # 待成交委托（vnpy 4.0 无 active_orders，胶水自维护；3.x 语义等价）
         self._pending_orders: dict[str, OrderData] = {}
+        # 本策略发出的入场委托 orderid 集合：异步拒单时据此回退核心入场状态
+        self._entry_orderids: set = set()
         # variables 列表声明的属性必须在实例上存在（引擎 put_strategy_event 会 getattr）
         self.state = ""
         self.upper = 0.0
@@ -172,10 +174,12 @@ class DualThrustStrategy(CtaTemplate):
             self.core.rollback_entry()
             return
         if sig.action is Action.BUY:
-            self.buy(sig.price, self.fixed_size)
+            orderids = self.buy(sig.price, self.fixed_size) or []
+            self._entry_orderids.update(orderids)  # 记录入场委托，异步拒单时回退核心状态
             self._notify("info", "开多", f"价格 {sig.price:.1f} 触发 {sig.reason}")
         elif sig.action is Action.SHORT:
-            self.short(sig.price, self.fixed_size)
+            orderids = self.short(sig.price, self.fixed_size) or []
+            self._entry_orderids.update(orderids)
             self._notify("info", "开空", f"价格 {sig.price:.1f} 触发 {sig.reason}")
         elif sig.action is Action.SELL:
             self.sell(sig.price, self.fixed_size)  # 平仓量恒用 fixed_size（异常路径下 pos 可能未同步为 0）
@@ -243,6 +247,14 @@ class DualThrustStrategy(CtaTemplate):
             self._pending_orders[order.vt_orderid] = order
         else:
             self._pending_orders.pop(order.vt_orderid, None)
+            if order.vt_orderid in self._entry_orderids:
+                self._entry_orderids.discard(order.vt_orderid)
+                if order.status == Status.REJECTED:
+                    # 异步拒单（非胶水主动阻止）：核心已入场但无实际仓位 → 回退待命，
+                    # 避免下一根无信号 bar 的一致性校验触发永久停机
+                    if self.core is not None:
+                        self.core.rollback_entry()
+                    self.write_log("入场委托被拒，回退待命")
         if order.status == Status.REJECTED:
             self.entry_blocked = True
             self._notify(
