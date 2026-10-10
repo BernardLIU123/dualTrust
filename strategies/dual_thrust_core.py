@@ -210,6 +210,21 @@ class DualThrustCore:
         self.state = DayState.CLOSED if reason == "FORCE_CLOSE" else DayState.STOPPED
         return Signal(action, price, reason)
 
+    def rollback_entry(self) -> None:
+        """撤销最近一次入场（胶水层阻止了对应委托时调用）。
+
+        只回退被阻止一侧：状态回 ARMED，对应方向标志恢复可再触发；
+        反手路径中已成交的一侧标志保持不变。
+        """
+        if self.state is DayState.LONG:
+            self.long_today = False
+        elif self.state is DayState.SHORT:
+            self.short_today = False
+        else:
+            return
+        self.state = DayState.ARMED
+        self.entry_price = self.stop_price = 0.0
+
     # ---------- ATR（Wilder 平滑，跨会话连续） ----------
     def _update_atr(self, bar: Bar) -> None:
         if self._prev_close is None:

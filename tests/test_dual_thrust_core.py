@@ -185,3 +185,39 @@ def test_stop_floor_uses_half_range_when_atr_small():
     feed(core, session_bars(5))
     feed(core, [make_bar(5, 21, 15, 116, 117, 114, 116)])
     assert core.stop_price == 111.0  # 116 - 5
+
+
+def test_rollback_entry_simple():
+    """胶水阻止入场后回退：状态回 ARMED、方向标志恢复，突破可重新触发。"""
+    core = DualThrustCore()
+    feed(core, session_bars(5))
+    sig = feed(core, [make_bar(5, 21, 15, 116, 117, 114, 116)])
+    assert sig == [Signal(Action.BUY, 116.0, "UPPER_BREAK")]
+    core.rollback_entry()
+    assert core.state is DayState.ARMED
+    assert core.long_today is False
+    assert core.entry_price == 0.0 and core.stop_price == 0.0
+    # 再喂突破 bar → 重新触发 BUY
+    sig = feed(core, [make_bar(5, 21, 16, 116, 117, 114, 116)])
+    assert sig == [Signal(Action.BUY, 116.0, "UPPER_BREAK")]
+    assert core.state is DayState.LONG
+
+
+def test_rollback_entry_after_reverse_exit():
+    """反手路径回退只撤销被阻止一侧：long_today 保持，short 可重触发，long 不再触发。"""
+    core = DualThrustCore()
+    feed(core, session_bars(5))
+    feed(core, [make_bar(5, 21, 15, 116, 117, 114, 116)])  # 开多
+    sig = feed(core, [make_bar(5, 21, 20, 94, 95, 93, 94)])  # 反手 SELL+SHORT
+    assert sig == [Signal(Action.SELL, 94.0, "REVERSE_EXIT"),
+                   Signal(Action.SHORT, 94.0, "LOWER_BREAK")]
+    core.rollback_entry()
+    assert core.state is DayState.ARMED
+    assert core.long_today is True
+    assert core.short_today is False
+    # 再喂下破 bar → SHORT 重新触发
+    sig = feed(core, [make_bar(5, 21, 25, 94, 95, 93, 94)])
+    assert sig == [Signal(Action.SHORT, 94.0, "LOWER_BREAK")]
+    # 再喂上破 bar → long_today 仍 True，无 BUY
+    sig = feed(core, [make_bar(5, 21, 30, 116, 117, 114, 116)])
+    assert not any(s.action is Action.BUY for s in sig)

@@ -1,10 +1,11 @@
 """策略胶水冒烟测试：用假引擎实例化，验证信号执行与风控门控。"""
 from datetime import datetime
 
-from vnpy.trader.constant import Exchange, Interval
+from vnpy.trader.constant import Direction, Exchange, Interval, Offset
 from vnpy.trader.object import BarData
 
 from dual_thrust import DualThrustStrategy
+from dual_thrust_core import DayState
 
 
 class FakeEngine:
@@ -107,3 +108,64 @@ def test_price_limit_blocks_entry():
     # 收盘 116 恰触及涨停 116 → 不追多
     s.on_bar(make_vn_bar(5, 21, 15, 116, 117, 114, 116, limit_up=116.0))
     assert engine.sent == []
+
+
+def test_blocked_entry_rolls_back_and_rearms():
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    s.market_stale = True
+    s.on_bar(make_vn_bar(5, 21, 15, 116, 117, 114, 116))  # 阻止 + 回退
+    assert engine.sent == []
+    assert s.core.state is DayState.ARMED
+    s.market_stale = False
+    s.on_bar(make_vn_bar(5, 21, 16, 116, 117, 114, 116))  # 恢复后再次突破 → 正常入场
+    assert len(engine.sent) == 1
+    assert not s.halted
+
+
+def test_segment_break_not_stale():
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    # 夜盘连续收盘（21:15–22:59 无缺口）
+    for i in range(15, 120):
+        s.on_bar(make_vn_bar(5, 21 + i // 60, i % 60, 105, 110, 100, 105))
+    s.on_bar(make_vn_bar(5, 23, 0, 105, 110, 100, 105))   # 夜盘收盘
+    s.on_bar(make_vn_bar(6, 9, 0, 106, 111, 101, 106))   # 次日日盘开盘（合法时段间隔）
+    assert s.market_stale is False
+
+
+def test_within_segment_gap_is_stale():
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    s.on_bar(make_vn_bar(6, 9, 0, 105, 110, 100, 105))    # 时段开盘（合法间隔）
+    s.on_bar(make_vn_bar(6, 9, 5, 105, 110, 100, 105))    # 正常
+    # 段内 9:05→9:20 缺口 15 分钟 → 判中断，开仓被阻止并回退
+    s.on_bar(make_vn_bar(6, 9, 20, 116, 117, 114, 116))
+    assert s.market_stale is True
+    assert engine.sent == []
+    assert s.core.state is DayState.ARMED
+
+
+def test_exit_uses_fixed_size_when_stale():
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    s.on_bar(make_vn_bar(5, 21, 15, 116, 117, 114, 116))  # 正常入场 LONG
+    s.pos = 1  # 模拟成交同步
+    s.market_stale = True
+    s.on_bar(make_vn_bar(5, 21, 16, 95, 96, 90, 95))  # 击穿止损 → SELL
+    exits = [o for o in engine.sent
+             if o["direction"] == Direction.SHORT and o["offset"] == Offset.CLOSE]
+    assert exits
+    assert exits[-1]["volume"] == s.fixed_size

@@ -33,6 +33,9 @@ from dual_thrust_core import Action, Bar, DayState, DualThrustCore, DualThrustPa
 from notifier import Notifier
 from trading_calendar import TradingCalendar
 
+# 各交易时段开盘时间：时段间的合法间隔（如 15:00→21:00、23:00→9:00）不判行情中断
+SEGMENT_OPEN_TIMES = {time(9, 0), time(10, 30), time(13, 30), time(21, 0)}
+
 
 class DualThrustStrategy(CtaTemplate):
     author = "dualT"
@@ -108,16 +111,20 @@ class DualThrustStrategy(CtaTemplate):
         self._stale_by_gap = False
         self.entry_blocked = False
         self._pending_orders.clear()
+        if self.core is not None and self.core.state in (DayState.LONG, DayState.SHORT) and self.pos == 0:
+            self.core.rollback_entry()
+            self.write_log("启动对账：核心持仓状态无实际仓位，回退入场")
         self.write_log("策略启动")
 
     def on_stop(self) -> None:
         self.write_log("策略停止")
 
     def on_bar(self, bar: BarData) -> None:
-        if self.core is None or self.halted:
-            return
+        # 时间戳先行更新（重启后首根 bar 不误报行情中断）
         prev_time = self.last_bar_time
         self.last_bar_time = bar.datetime
+        if self.core is None or self.halted:
+            return
 
         core_bar = Bar(bar.datetime, bar.open_price, bar.high_price,
                        bar.low_price, bar.close_price, bar.volume)
@@ -151,15 +158,18 @@ class DualThrustStrategy(CtaTemplate):
         if self.market_stale or self.entry_blocked:
             if sig.action in (Action.BUY, Action.SHORT):
                 self.write_log(f"开仓信号被阻止: {sig.action.value} {sig.reason}")
+                self.core.rollback_entry()  # 核心已入场但委托被阻止 → 回退，避免状态失配停机
                 return
         # 涨跌停保护：临近涨跌停不追单（vnpy 4.0 BarData 无该字段，getattr 兜底 0 = 不拦截）
         limit_up = getattr(bar, "limit_up", 0)
         limit_down = getattr(bar, "limit_down", 0)
         if sig.action is Action.BUY and limit_up and sig.price >= limit_up:
             self.write_log(f"接近涨停，放弃开多: {sig.price} >= {limit_up}")
+            self.core.rollback_entry()
             return
         if sig.action is Action.SHORT and limit_down and sig.price <= limit_down:
             self.write_log(f"接近跌停，放弃开空: {sig.price} <= {limit_down}")
+            self.core.rollback_entry()
             return
         if sig.action is Action.BUY:
             self.buy(sig.price, self.fixed_size)
@@ -168,14 +178,16 @@ class DualThrustStrategy(CtaTemplate):
             self.short(sig.price, self.fixed_size)
             self._notify("info", "开空", f"价格 {sig.price:.1f} 触发 {sig.reason}")
         elif sig.action is Action.SELL:
-            self.sell(sig.price, abs(self.pos))
+            self.sell(sig.price, self.fixed_size)  # 平仓量恒用 fixed_size（异常路径下 pos 可能未同步为 0）
             self._notify("warn", "平多", f"价格 {sig.price:.1f} 触发 {sig.reason}")
         elif sig.action is Action.COVER:
-            self.cover(sig.price, abs(self.pos))
+            self.cover(sig.price, self.fixed_size)
             self._notify("warn", "平空", f"价格 {sig.price:.1f} 触发 {sig.reason}")
 
     # ---------- 风控与监控 ----------
     def _check_market_stale(self, prev_time, now) -> None:
+        if now.time() in SEGMENT_OPEN_TIMES:
+            return  # 时段间合法间隔（收盘→下一时段开盘），不判中断
         if prev_time is None:
             return
         if (now - prev_time).total_seconds() > self.market_stale_seconds:
