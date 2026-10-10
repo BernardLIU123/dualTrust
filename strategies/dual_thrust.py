@@ -52,7 +52,6 @@ class DualThrustStrategy(CtaTemplate):
     market_stale_seconds = 300    # 行情中断判定（默认 5 分钟）
     prewarn_minute = 50           # 14:50 持仓预警
 
-    # 扩展参数（配置文件注入，非 GUI）
     dingtalk_webhook = ""
     calendar_path = ""
 
@@ -60,6 +59,7 @@ class DualThrustStrategy(CtaTemplate):
         "window_minutes", "k1", "k2", "atr_length", "stop_atr_mult",
         "fixed_size", "force_close_minute", "warmup_days",
         "market_stale_seconds", "prewarn_minute",
+        "dingtalk_webhook", "calendar_path",
     ]
     variables = ["state", "upper", "lower", "pos", "entry_price", "stop_price"]
 

@@ -1,0 +1,31 @@
+{
+  "strategy": {
+    "window_minutes": 15,
+    "k1": 0.5,
+    "k2": 0.5,
+    "atr_length": 30,
+    "stop_atr_mult": 2.0,
+    "fixed_size": 1,
+    "force_close_minute": 55,
+    "prewarn_minute": 50,
+    "warmup_days": 10,
+    "market_stale_seconds": 300
+  },
+  "risk": {
+    "max_daily_loss_pct": 2.0,
+    "max_drawdown_pct": 20.0,
+    "risk_manager": {
+      "active": true,
+      "order_flow_limit": 5,
+      "order_flow_clear": 1,
+      "order_size_limit": 5,
+      "trade_limit": 100,
+      "active_order_limit": 10
+    }
+  },
+  "alert": {
+    "dingtalk_webhook": "",
+    "enabled": false
+  },
+  "calendar": "config/trading_calendar.json"
+}

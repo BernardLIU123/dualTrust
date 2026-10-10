@@ -1,0 +1,15 @@
+{
+  "font.family": "微软雅黑",
+  "font.size": 12,
+  "log.active": true,
+  "log.level": 50,
+  "log.console": true,
+  "log.file": true,
+  "database.database": "sqlite",
+  "database.name": "C:\\Users\\liubo\\.vntrader\\database.db",
+  "database.host": "localhost",
+  "database.port": 3306,
+  "database.user": "root",
+  "database.password": "",
+  "datafeed.name": ""
+}
