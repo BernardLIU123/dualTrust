@@ -2,7 +2,7 @@
   "font.family": "微软雅黑",
   "font.size": 12,
   "log.active": true,
-  "log.level": 50,
+  "log.level": 20,
   "log.console": true,
   "log.file": true,
   "database.database": "C:\\Users\\liubo\\.vntrader\\database.db",

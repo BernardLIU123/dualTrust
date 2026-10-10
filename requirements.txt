@@ -1,6 +1,8 @@
 vnpy>=3.9
 vnpy_ctastrategy>=1.1.9
 # vnpy_ctp>=1.0.2  # 实盘必需；Python 3.14 无 wheel 且本机无 C++ 编译器，源码构建失败，实盘任务前解决
+# vnpy_riskmanager>=2.0.0  # spec 5.1 第二层风控（流控/单笔手数/活动委托上限）；vnpy 4.0 兼容（声明 vnpy>=4.0.0），
+#                          但无 cp314 wheel（仅 cp313/sdist，源码构建需 MSVC）→ 随实盘 Python 3.11/3.12 环境安装
 pandas>=2.0
 pytest>=8.0
 matplotlib>=3.8

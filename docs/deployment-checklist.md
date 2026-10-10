@@ -18,7 +18,7 @@
 - [ ] **样本外/样本内绩效比 ≥ 60%**：样本外收益（或夏普）÷ 样本内对应值
 - [ ] **成本占比 ≤ 30%**：见 0.3 的成本占比核对步骤
 - [ ] **正收益年份 ≥ 60%**：`output/backtest/yearly_pnl.csv` 中 net_pnl > 0 的年份占比
-- [ ] **参数微扰 ≤ 25%**：`run_backtest.py --sensitivity` 输出（k1/k2/窗口/ATR 微扰后绩效相对基准的偏移幅度）
+- [ ] **参数微扰 ≤ 25%**：`run_backtest.py --sensitivity` 输出（k1/k2/stop_atr_mult 基准值、±0.1 扰动后的夏普值），由分析者手动对照 `output/backtest/sensitivity.csv` 判定偏移幅度（脚本只记录原始夏普，不做自动化判定）
 
 ### 0.2 真实数据导入与校验
 
@@ -54,20 +54,21 @@
 ### 1.1 准备（按序执行）
 
 - [ ] **① CTP 网关与 Python 3.14 兼容性**（本机 3.14.3 无 vnpy_ctp wheel，见"已知限制与验证项"第 1 条）：
-  - [ ] 方案 A（推荐，立即可用）：另建 Python 3.11/3.12 环境（如 `py -3.12 -m venv ~/.venv-live` → 激活 → `pip install vnpy vnpy_ctastrategy vnpy_ctp`）
+  - [ ] 方案 A（推荐，立即可用）：另建 Python 3.11/3.12 环境（如 `py -3.12 -m venv ~/.venv-live` → 激活 → `pip install vnpy vnpy_ctastrategy vnpy_ctp vnpy_riskmanager`；vnpy_riskmanager 2.0.0 兼容 vnpy 4.0 但同样无 cp314 wheel，随此环境一并安装）
   - [ ] 或方案 B：等待 vnpy_ctp 官方 cp314 wheel 发布后直接 `pip install vnpy_ctp` 到本机 3.14 环境
-  - [ ] 装好后验证：`python -c "import vnpy_ctp; print('OK')"`
+  - [ ] 装好后验证：`python -c "import vnpy_ctp, vnpy_riskmanager; print('OK')"`
 - [ ] **② SimNow 仿真账号**：注册 SimNow（simnow.com.cn），获取仿真前置地址、账号、BrokerID、AppID、AuthCode（AppID/AuthCode 用于穿透式认证）
-- [ ] **③ 全局配置就位**：把 `config/vt_setting.json` 复制到 `~/.vntrader/vt_setting.json`（`database.name` 已按本机用户名 `liubo` 填写）
+- [ ] **③ 全局配置就位**：把 `config/vt_setting.json` 复制到 `~/.vntrader/vt_setting.json`（`database.name` 已按本机用户名 `liubo` 填写）。**注意：`log.level=20` 是审计要求（50 会静默全部策略日志），复制后勿改回 50**
 - [ ] **④ 策略文件部署**：把 `strategies/` 下 **4 个文件**（`dual_thrust.py`、`dual_thrust_core.py`、`notifier.py`、`trading_calendar.py`）平铺复制到 vn_trader 启动工作目录的 `strategies/` 子目录（vn.py 按 cwd 加载）
 - [ ] **⑤ 实盘 warmup 数据**：用 `tools/import_data.py` 把 RU 主力连续分钟数据导入 sqlite（策略 `on_init` 的 `load_bar(warmup_days)` 依赖该库；目标库与 `vt_setting.json` 的 `database.name` 一致）
 - [ ] **⑥ 告警 webhook**：开通钉钉群机器人，把 webhook 填入 `config/dual_thrust_config.json` 的 `alert.dingtalk_webhook` 并把 `alert.enabled` 置 `true`（空 webhook = 告警静默）
 
 ### 1.2 启动步骤
 
-- [ ] 启动 `vn_trader`
+- [ ] 启动 `vn_trader`（**相对路径前提：`calendar_path` 等相对路径配置要求 vn_trader 从仓库根目录启动**，否则日历/配置按相对路径解析失败）
 - [ ] 连接 CTP 网关（SimNow 前置地址 + 仿真账号 + AppID/AuthCode）
-- [ ] CtaStrategyPro 面板添加 `DualThrustStrategy`，参数照 `config/dual_thrust_config.json` 的 `strategy` 段逐项填入（**`dingtalk_webhook` 与 `calendar_path` 已在 parameters 列表，可直接在参数面板或 setting dict 注入**，见"已知限制与验证项"第 5 条；`calendar_path` 填 `config/trading_calendar.json`）
+- [ ] vn_trader 启动后加载 RiskManager 应用（主界面"功能"菜单勾选"风控"，spec 5.1 第二层风控：流控/单笔最大手数/当日总委托手数/活动委托上限/保证金检查；依赖上一步安装的 `vnpy_riskmanager`）
+- [ ] CTA策略 应用（vn_trader 主界面 CTA策略）添加 `DualThrustStrategy`，参数照 `config/dual_thrust_config.json` 的 `strategy` 段逐项填入（**`dingtalk_webhook` 与 `calendar_path` 已在 parameters 列表，可直接在参数面板或 setting dict 注入**，见"已知限制与验证项"第 5 条；`calendar_path` 填 `config/trading_calendar.json`）
 - [ ] 风控参数照 `config/dual_thrust_config.json` 的 `risk` 段在风控模块配置（spec 5.1 第三层：日亏 2% 熔断、回撤 20% 全面停策略，**每日盘前由交易员复核**）
 - [ ] 启动策略 → 观察初始化日志：历史 bar 预热成功、无异常
 - [ ] 验证告警链路：确认能收到策略告警推送（注意 vnpy 4.0 无 EVENT_GATEWAY，"网关连接"推送已不可用，改用其他告警事件验证，见"已知限制与验证项"第 3 条）
@@ -130,4 +131,4 @@
 2. **涨跌停保护在 vnpy 4.0 惰性**：BarData 无 `limit_up`/`limit_down` 字段（本地已核实 vnpy 4.0.0：BarData 字段无此二项，**TickData 仍带 `limit_up`/`limit_down`**），保护依赖上游动态附加，默认 0 = 不拦截。Phase 1 必须核实：CTP 网关 4.0 是否给 BarData 附加该字段（以 TickData 仍带该字段为线索，在网关生成 bar 的路径上检查）；**若不附加，Phase 2 实盘前必须另找方案（如 tick 级涨跌停检查）**。此条已列为 Phase 1 退出条件的显式检查项。
 3. **网关断线告警在 vnpy 4.0 不可用**（EVENT_GATEWAY 事件已移除，策略 `on_init` 会写日志提示）：断线由"行情中断（5 分钟无 bar）"检测兜底（`market_stale_seconds = 300`）。Phase 1 需实测验证兜底时效（从断线到告警/禁开仓的延迟）。
 4. **数据导入缺口告警的已知误报**：`import_data.py` 的缺 bar 检测会把合法的时段间隔（夜盘→日盘、午休、10:15 小节休息、收盘→夜盘开盘）算作 warning。导入真实数据时这些 warning 可忽略，但**段内真实缺口 warning 要认真核对**（缺失分钟数较多会影响策略信号）。
-5. **告警推送 webhook 配置方式**：`dingtalk_webhook` 与 `calendar_path` 已加入策略 `parameters` 列表（Task 5 审查裁定落地），可通过 CtaStrategyPro 的参数面板或 setting dict 注入；`config/dual_thrust_config.json` 的 `alert` 段作为取值来源，**启动时人工填入参数面板**（`enabled: true` 时才发送；webhook 留空 = 静默）。
+5. **告警推送 webhook 配置方式**：`dingtalk_webhook` 与 `calendar_path` 已加入策略 `parameters` 列表（Task 5 审查裁定落地），可通过 CTA策略 应用（vn_trader 主界面 CTA策略）的参数面板或 setting dict 注入；`config/dual_thrust_config.json` 的 `alert` 段作为取值来源，**启动时人工填入参数面板**（`enabled: true` 时才发送；webhook 留空 = 静默）。

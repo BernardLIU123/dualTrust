@@ -23,9 +23,9 @@ python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt
 ```
 
-2. 导入数据（见 `tools/` 下数据导入脚本）。
+2. 导入数据（见 `tools/import_data.py`）。
 
-3. 回测（见 `tools/` 下回测脚本）。
+3. 回测（见 `tools/run_backtest.py`）。
 
 ## 文档
 
