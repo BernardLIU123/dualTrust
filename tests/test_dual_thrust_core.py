@@ -175,8 +175,39 @@ def test_short_entry_and_stop():
     sig = feed(core, [make_bar(5, 21, 15, 94, 95, 93, 94)])
     assert sig == [Signal(Action.SHORT, 94.0, "LOWER_BREAK")]
     assert core.stop_price == 114.0  # 94 + 20
-    sig = feed(core, [make_bar(5, 21, 16, 114.5, 115, 113, 114.0)])
-    assert sig == [Signal(Action.COVER, 114.0, "STOP_LOSS")]  # max(stop, close)=114
+    # 真实跳空场景：close 114.2 跳过止损价 114.0 → 按更差的收盘价成交
+    sig = feed(core, [make_bar(5, 21, 16, 114.5, 115, 113, 114.2)])
+    assert sig == [Signal(Action.COVER, 114.2, "STOP_LOSS")]  # max(stop, close)=114.2
+
+
+def test_no_entry_after_force_close_time():
+    core = DualThrustCore()
+    feed(core, session_bars(5))                      # 第 5 日 21:00 会话 → ARMED
+    sig = feed(core, [make_bar(6, 14, 56, 116, 117, 114, 116)])  # 次日 14:56 突破上轨
+    assert sig == []                                # 14:55 起不再开新仓
+    assert core.state is DayState.ARMED
+
+
+def test_missing_2100_bar_starts_new_session():
+    """缺失 21:00 开盘 bar 时，下一根跨日 bar 直接开新会话。"""
+    core = DualThrustCore()
+    feed(core, session_bars(5))
+    assert core.state is DayState.ARMED
+    sig = feed(core, [make_bar(6, 22, 0, 105, 106, 104, 105)])  # 无 21:00 bar，直接 22:00
+    assert sig == []
+    assert core.state is DayState.COLLECTING
+    assert len(core._range_bars) == 1             # 区间收集已重置
+
+
+def test_session_rollover_with_open_position_force_closes():
+    """跨日首根 bar 到达时仍持仓（缺失 14:55 强平 bar）→ 先补发强平再开新会话。"""
+    core = DualThrustCore()
+    feed(core, session_bars(5))
+    feed(core, [make_bar(5, 21, 15, 116, 117, 114, 116)])  # 开多
+    assert core.state is DayState.LONG
+    sig = feed(core, [make_bar(6, 22, 0, 105, 106, 104, 105)])
+    assert sig == [Signal(Action.SELL, 105.0, "FORCE_CLOSE")]
+    assert core.state is DayState.COLLECTING
 
 
 def test_stop_floor_uses_half_range_when_atr_small():

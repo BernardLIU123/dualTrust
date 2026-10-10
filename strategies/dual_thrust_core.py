@@ -87,8 +87,16 @@ class DualThrustCore:
         """处理一根 1 分钟 bar，返回需按序执行的信号列表。"""
         signals: list[Signal] = []
 
-        if bar.time == self.params.session_start:
+        if (bar.time == self.params.session_start
+                or (self._session_date is not None
+                    and bar.time > self.params.session_start
+                    and bar.datetime.date() != self._session_date)):
+            # 若仍在持仓（缺失 14:55 强平 bar），先补发强平信号再开新会话
+            signals = []
+            if self.state in (DayState.LONG, DayState.SHORT):
+                signals.append(self._close_position(bar.close, "FORCE_CLOSE"))
             self._start_session(bar)
+            return signals
         elif self._session_date is None:
             if bar.time > self.params.session_start:
                 self.state = DayState.ABORTED  # 夜盘开盘 bar 缺失，当日放弃
@@ -133,6 +141,10 @@ class DualThrustCore:
         self.state = DayState.ARMED
 
     def _on_armed(self, bar: Bar) -> list[Signal]:
+        # 14:55 起（日盘强平时点）不再开新仓：尾盘入场无法隔夜持有，徒增执行风险；
+        # 夜盘 bar（>= session_start）不受影响
+        if bar.time < self.params.session_start and bar.time >= self.params.force_close_time:
+            return []
         signals: list[Signal] = []
         if bar.close > self.upper and not self.long_today:
             self._enter_long(bar.close)

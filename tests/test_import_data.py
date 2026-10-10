@@ -73,6 +73,24 @@ def test_validate_gap_warning(tmp_path):
     assert any("缺失" in w for w in report.warnings)
 
 
+def test_validate_nan_price(tmp_path):
+    body = "2026-01-05 21:00:00,105.0,110.0,100.0,,1000,0\n"  # close 为空 → NaN
+    df = read_csv(make_csv(tmp_path, body))
+    report = validate(df)
+    assert not report.ok
+    assert any("非法" in e for e in report.errors)
+
+
+def test_validate_session_break_not_warning(tmp_path):
+    # 22:59 → 次日 09:00 为合法时段间隔（夜盘收盘→日盘开盘），不判缺失 bar
+    body = ("2026-01-05 22:59:00,105.0,110.0,100.0,105.0,1000,0\n"
+            "2026-01-06 09:00:00,106.0,111.0,101.0,106.0,1000,0\n")
+    df = read_csv(make_csv(tmp_path, body))
+    report = validate(df)
+    assert report.ok
+    assert not any("缺失" in w for w in report.warnings)
+
+
 def test_validate_holiday_warning(tmp_path):
     class FakeCalendar:
         def is_trading_day(self, d):

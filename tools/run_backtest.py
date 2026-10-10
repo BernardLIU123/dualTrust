@@ -48,6 +48,9 @@ DEFAULTS = dict(
     pricetick=5.0,     # 最小变动价位 5 元/吨
 )
 
+# 微扰参数的基准值（与策略默认参数一致；setting 未显式给出时按此取基准）
+DEFAULT_PARAM_VALUES = {"k1": 0.5, "k2": 0.5, "stop_atr_mult": 2.0}
+
 
 def _build_engine(args, setting: dict, bars: list) -> BacktestingEngine:
     """以已转换的 bars 构造引擎（history_data 直接注入，4.0 已验证 run_backtesting
@@ -151,14 +154,18 @@ def run_optimization(args, output_dir: Path) -> None:
 
 
 def run_sensitivity(args, output_dir: Path) -> None:
-    """参数微扰稳定性：k1/k2/stop_atr_mult 各 ±0.1，夏普变化 ≤ 25% 视为稳定。"""
+    """参数微扰记录：k1/k2/stop_atr_mult 各取基准值与 ±0.1 扰动，落盘 sensitivity.csv。
+
+    脚本只输出原始夏普值（基准值、±0.1 扰动后的夏普值），不做稳定性判定；
+    稳定性是否达标（如夏普变化 ≤ 25%）由分析者在 Phase 0 手动对照验收门槛判断。
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     base = json.loads(args.params) if args.params else {}
     rows = []
     for param in ("k1", "k2", "stop_atr_mult"):
-        for delta in (-0.1, 0.1):
+        for delta in (-0.1, 0.0, 0.1):
             setting = dict(base)
-            setting[param] = round(setting.get(param, 0.5) + delta, 2)
+            setting[param] = round(setting.get(param, DEFAULT_PARAM_VALUES[param]) + delta, 2)
             stats = run_single(args, setting, output_dir / f"sens_{param}_{delta:+.1f}")
             rows.append({"param": param, "delta": delta,
                          "sharpe": stats.get("sharpe_ratio")})

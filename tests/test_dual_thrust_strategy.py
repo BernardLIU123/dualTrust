@@ -172,6 +172,23 @@ def test_exit_uses_fixed_size_when_stale():
     assert exits[-1]["volume"] == s.fixed_size
 
 
+def test_short_position_no_false_halt():
+    """核心 SHORT + 柜台 pos=-1（净持仓）+ 无待成交委托 → 不得触发持仓不一致停机。"""
+    engine, s = make_strategy()
+    s.on_init()
+    s.trading = True
+    for i in range(15):
+        s.on_bar(make_vn_bar(5, 21, i % 60, 105, 110, 100, 105))
+    s.on_bar(make_vn_bar(5, 21, 15, 94, 95, 93, 94))  # 跌破下轨 → SHORT
+    assert len(engine.sent) == 1
+    assert engine.sent[0]["direction"] == Direction.SHORT
+    s.pos = -1  # 模拟空头成交（vnpy pos 为净持仓，空头为负）
+    s._pending_orders.clear()  # 成交回报已清空待成交委托
+    s._entry_orderids.discard("fake-1")
+    s.on_bar(make_vn_bar(5, 21, 16, 105, 110, 100, 105))  # 无信号 bar → 一致性校验
+    assert s.halted is False
+
+
 def test_rejected_entry_rolls_back():
     engine, s = make_strategy()
     s.on_init()

@@ -113,6 +113,7 @@ class DualThrustStrategy(CtaTemplate):
         self._stale_by_gap = False
         self.entry_blocked = False
         self._pending_orders.clear()
+        self._entry_orderids.clear()
         if self.core is not None and self.core.state in (DayState.LONG, DayState.SHORT) and self.pos == 0:
             self.core.rollback_entry()
             self.write_log("启动对账：核心持仓状态无实际仓位，回退入场")
@@ -209,7 +210,13 @@ class DualThrustStrategy(CtaTemplate):
     def _check_consistency(self) -> None:
         if self._pending_orders:
             return  # 有待成交委托时不校验
-        expected = self.fixed_size if self.core.state in (DayState.LONG, DayState.SHORT) else 0
+        # vnpy pos 为净持仓：多头为正、空头为负（SHORT 持仓 pos = -fixed_size）
+        if self.core.state is DayState.LONG:
+            expected = self.fixed_size
+        elif self.core.state is DayState.SHORT:
+            expected = -self.fixed_size
+        else:
+            expected = 0
         if self.pos != expected:
             self.halted = True
             msg = f"核心状态 {self.core.state.value}，实际仓位 {self.pos} → 策略停机，需人工核对"
@@ -222,7 +229,7 @@ class DualThrustStrategy(CtaTemplate):
                 and bar.datetime.time().hour == 14
                 and not self._prewarned_today):
             self._prewarned_today = True
-            self._notify("warn", "强平预警", f"14:50 仍持仓 {self.pos} 手，14:55 将强平")
+            self._notify("warn", "强平预警", f"14:50 仍持仓 {abs(self.pos)} 手，14:55 将强平")
 
     def _on_gateway_event(self, event: Event) -> None:
         # 仅 vnpy ≤3.x 存在 EVENT_GATEWAY；4.0 中本方法不会被注册。

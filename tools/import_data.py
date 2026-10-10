@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +18,8 @@ from vnpy.trader.object import BarData
 REQUIRED_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 # 交易时段（小时）：夜盘 21-22 点，日盘 9-11、13-14 点
 SESSION_HOURS = {21, 22, 9, 10, 11, 13, 14}
+# 各交易时段开盘时间：gap 检测中，第二根 bar 落在这些时点视为合法时段间隔（不判缺失）
+SESSION_OPEN_TIMES = {time(9, 0), time(10, 30), time(13, 30), time(21, 0)}
 
 
 @dataclass
@@ -61,14 +63,16 @@ def validate(df: pd.DataFrame, calendar=None) -> ValidationReport:
     if not df["datetime"].is_monotonic_increasing:
         report.errors.append("时间戳非单调递增")
 
-    bad = (df["high"] < df["low"]) | (df[["open", "high", "low", "close"]] <= 0).any(axis=1)
+    price_cols = df[["open", "high", "low", "close"]]
+    bad = (df["high"] < df["low"]) | (price_cols <= 0).any(axis=1) | price_cols.isna().any(axis=1)
     if bad.any():
-        report.errors.append(f"{int(bad.sum())} 行价格非法（high<low 或非正值）")
+        report.errors.append(f"{int(bad.sum())} 行价格非法（high<low、非正值或缺失）")
 
     dt = df["datetime"]
     gap_min = (dt.diff().dt.total_seconds() / 60.0).dropna()
     in_session = dt.dt.hour.isin(SESSION_HOURS)
-    big_gap = gap_min[(gap_min > 1.5) & in_session.iloc[1:].to_numpy()]
+    second = dt.dt.time.iloc[1:]
+    big_gap = gap_min[(gap_min > 1.5) & in_session.iloc[1:].to_numpy() & ~second.isin(SESSION_OPEN_TIMES).to_numpy()]
     if big_gap.any():
         report.warnings.append(
             f"交易时段内 {len(big_gap)} 处缺失 bar（最大间隔 {big_gap.max():.0f} 分钟）"
