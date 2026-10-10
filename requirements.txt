@@ -1,0 +1,6 @@
+vnpy>=3.9
+vnpy_ctastrategy>=1.1.9
+# vnpy_ctp>=1.0.2  # 实盘必需；Python 3.14 无 wheel 且本机无 C++ 编译器，源码构建失败，实盘任务前解决
+pandas>=2.0
+pytest>=8.0
+matplotlib>=3.8
